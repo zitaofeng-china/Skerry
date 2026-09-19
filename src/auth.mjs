@@ -9,7 +9,7 @@ export const official=[
  {id:'official-grok',name:'Grok',loginAvailable:true,authLabel:'xAI 账号',description:'浏览器完成 xAI 授权后，工作台保存凭证。'},
  {id:'official-claude',name:'Claude',loginAvailable:true,authLabel:'Anthropic 账号',description:'浏览器完成 Anthropic 授权后，工作台保存凭证。'},
  {id:'official-codex',name:'Codex',loginAvailable:true,authLabel:'OpenAI 账号',description:'浏览器完成 OpenAI 授权后，工作台保存凭证。'},
- {id:'official-gemini',name:'Gemini',loginAvailable:true,authLabel:'Google 账号',description:'浏览器完成 Google 授权后，把 antigravity.google 页面上的一次性代码粘贴回工作台。'},
+ {id:'official-gemini',name:'Gemini',loginAvailable:false,authLabel:'Google 账号',description:'浏览器完成 Google 授权后，把 antigravity.google 页面上的一次性代码粘贴回工作台。'},
 ];
 
 function loadOfficialToken(id){try{const value=loadSecret(id);if(value)return JSON.parse(value)}catch{}return null;}
@@ -62,8 +62,27 @@ function codexStatus(){
  return oauth;
 }
 
+function geminiLoginReady(env=process.env){
+ const spec=cpaOAuthSpec('official-gemini', env);
+ return Boolean(String(spec?.clientId||'').trim());
+}
+
 export const statuses=()=>official.map(c=>{
- if(c.id==='official-gemini')return {...c,kind:'official',models:[],...geminiStatus(),flow:'browser'};
+ if(c.id==='official-gemini'){
+  const ready=geminiLoginReady();
+  return {
+    ...c,
+    kind:'official',
+    models:[],
+    ...geminiStatus(),
+    flow:'browser',
+    loginAvailable:ready,
+    loginDisabledReason: ready ? undefined : '未配置 GEMINI_OAUTH_CLIENT_ID，官方 Google 登录暂不可用。可改用自定义 Gemini 兼容接口。',
+    description: ready
+      ? c.description
+      : '未配置 GEMINI_OAUTH_CLIENT_ID。官方 Google 登录已停用，可用自定义供应商接入 Gemini 兼容接口。',
+  };
+ }
  if(c.id==='official-grok')return {...c,kind:'official',models:[],...grokStatus()};
  if(c.id==='official-claude')return {...c,kind:'official',models:[],...claudeStatus(),flow:'browser'};
  if(c.id==='official-codex')return {...c,kind:'official',models:[],...codexStatus(),flow:'browser'};
@@ -113,6 +132,9 @@ export async function authAction(action,b){
  }
  const spec=cpaOAuthSpec(b.id);
  if(!spec)throw new Error('官方登录当前不可用');
+ if(b.id==='official-gemini' && !String(spec.clientId||'').trim()){
+  throw new Error('未配置 GEMINI_OAUTH_CLIENT_ID，官方 Google 登录暂不可用');
+ }
  let redirectUri=spec.redirectUri;
  if(callbacks.has(b.id)){callbacks.get(b.id).close();callbacks.delete(b.id);}
  if(spec.flow==='browser' && spec.callbackPort){

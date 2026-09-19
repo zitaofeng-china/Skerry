@@ -285,7 +285,7 @@ test('管理者接口持久化并在服务重启后恢复，不改动会话',asy
   await stop();address=await start();
   const reloaded=await (await fetch(address+'/api/state')).json();assert.deepEqual(reloaded.manager,{connectionId:'a',model:'model-a',effort:'high',contextWindow:128000});
   assert.equal((await fetch(address+'/shell.js')).status,200);assert.deepEqual(reloaded.connections[0].modelGroups,['codex','claude']);assert.equal(reloaded.connections[0].hasKey,true);assert.equal((await fetch(address+'/model-groups.js')).status,200);
- }finally{await stop();deleteSecret('a',env);fs.rmdirSync(env.MULTI_AGENT_SECRETS);fs.unlinkSync(path.join(dir,'workspace.json'));fs.rmdirSync(dir);}
+ }finally{await stop();deleteSecret('a',env);fs.rmSync(dir,{recursive:true,force:true});}
 });
 test('启用同系列提供商时管理者跟过去，不改会话',async()=>{
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'agents-manager-act-'));

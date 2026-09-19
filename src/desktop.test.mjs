@@ -14,5 +14,5 @@ test('桌面随机端口、独立数据目录、父进程退出清理服务',asy
  const state=await (await fetch(address+'/api/state')).json();assert.equal(state.projects.length,0);
  const save=await fetch(address+'/api/connection',{method:'POST',headers:{Origin:address,'Content-Type':'application/json'},body:JSON.stringify({name:'desktop test',baseUrl:'https://example.com/v1',protocol:'openai'})});assert.equal(save.status,200);assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'workspace.json'))).connections[0].name,'desktop test');
  const exited=once(child,'exit');child.stdin.end();await exited;await assert.rejects(()=>fetch(address+'/api/state'));
- }finally{if(child.exitCode===null)child.kill();const file=path.join(dir,'workspace.json');if(fs.existsSync(file))fs.unlinkSync(file);fs.rmdirSync(dir);}
+ }finally{if(child.exitCode===null)child.kill();fs.rmSync(dir,{recursive:true,force:true});}
 });

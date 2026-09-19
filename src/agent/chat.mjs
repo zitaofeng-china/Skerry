@@ -20,7 +20,8 @@ import {
   abortTaskEvents,
 } from './store.mjs';
 import { pickVendor, pickFamily, runTurn, vendorLabel, groupLabel, cycleMode } from './loop.mjs';
-import { normalizeMode } from './permissions.mjs';
+import { normalizeMode, isFullAccess } from './permissions.mjs';
+import { abortWorkspaceCommands } from './workspace-io.mjs';
 import { sseWriter } from './stream.mjs';
 import { capabilityPool, cloneStatus, preferActiveRoute, resolveCloneSlot, resolveDispatchTarget } from './dispatch.mjs';
 import { measureContext, resolveContextWindow } from './compact.mjs';
@@ -169,6 +170,7 @@ function abortKey(sessionId, key) {
   const run = runs.get(key);
   if (!run) return null;
   run.controller.abort();
+  if (run.workspace) abortWorkspaceCommands(run.workspace);
   hitl.cancelSession(sessionId, key.slice(String(sessionId).length + 1));
   runs.delete(key);
   return run;
@@ -230,11 +232,19 @@ function mutateGroup(dataDir, sessionId, mutator) {
   return { timeline, result };
 }
 
+function parseHitlApproved(body) {
+  if (body.answers != null) return true;
+  const value = body.approved;
+  if (value === true || value === 1 || value === '1' || value === 'true') return true;
+  if (value === false || value === 0 || value === '0' || value === 'false') return false;
+  throw new Error('请明确允许或拒绝');
+}
+
 export function handleHitl(body) {
   const id = String(body.approvalId || body.id || '');
   if (!id) throw new Error('缺少审批 id');
   return hitl.resolve(id, {
-    approved: body.approved !== false && body.approved !== 'false',
+    approved: parseHitlApproved(body),
     reason: String(body.reason || ''),
     answers: body.answers,
   });
@@ -389,7 +399,7 @@ export async function handleChat(deps, body, req, res) {
     if (approval.sessionId === sessionId && approval.targetId === thisTarget) sse.send('hitl_request', approval);
   };
   hitl.on('request', onHitl);
-  runs.set(key, { controller, sse, manager: isManager ? freezeManager(route) : null });
+  runs.set(key, { controller, sse, manager: isManager ? freezeManager(route) : null, workspace: found.project.path });
 
   const transcript = loadTranscript(dataDir, sessionId, targetKey(isManager, partitionId), family);
   const emit = (event, data) => {
@@ -432,7 +442,7 @@ export async function handleChat(deps, body, req, res) {
       hitl,
       emit: extra.emit || emit,
       depth: extra.depth || 0,
-      allowOutside: false,
+      allowOutside: Boolean(extra.allowOutside) || isFullAccess(partVendor, extra.mode || partTranscript.mode),
       maxTurns: extra.maxTurns || 24,
     };
   };
@@ -523,7 +533,7 @@ export async function handleChat(deps, body, req, res) {
     const jobController = new AbortController();
     const jobKey = runKey(sessionId, false, partition.id);
     abortRun(sessionId, false, partition.id);
-    runs.set(jobKey, { controller: jobController, sse: null, kind, taskId, partitionId: partition.id });
+    runs.set(jobKey, { controller: jobController, sse: null, kind, taskId, partitionId: partition.id, workspace: found.project.path });
     const jobTarget = targetKey(false, partition.id);
     const jobEmit = (event, data) => {
       const payload = { ...data, partitionId: partition.id, taskId, via: kind };

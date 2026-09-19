@@ -355,13 +355,14 @@ export async function execute(name, args, ctx) {
         background: Boolean(a.RunPersistent),
         allowOutside,
         timeoutMs: a.RunPersistent ? 0 : 120000,
+        abortSignal: ctx.abortSignal,
       });
     case 'manage_task': {
       const action = String(arg(a, 'Action') || '').toLowerCase();
-      if (action === 'list') return { ok: true, tasks: listBackgroundTasks() };
+      if (action === 'list') return { ok: true, tasks: listBackgroundTasks(ctx.workspace) };
       if (action === 'kill') return killBackgroundTask(arg(a, 'TaskId'));
       if (action === 'send_input') return writeTaskStdin(arg(a, 'TaskId'), arg(a, 'Input'));
-      if (action === 'status') return { ok: true, tasks: listBackgroundTasks().filter(t => t.id === arg(a, 'TaskId')) };
+      if (action === 'status') return { ok: true, tasks: listBackgroundTasks(ctx.workspace).filter(t => t.id === arg(a, 'TaskId')) };
       return { ok: false, error: 'Unknown Action' };
     }
     case 'schedule':

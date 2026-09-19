@@ -21,7 +21,8 @@ test('项目行含省略号菜单和右侧编辑开新会话，点击项目展�
   assert.match(app, /function sessionRow/);
   assert.match(app, /取消置顶':'置顶/);
   assert.match(app, />编辑</);
-  assert.match(app, />在资源管理器中打开</);
+  assert.match(app, /在访达 \/ 资源管理器中打开/);
+  assert.match(app, /data-action="relocate-project"/);
   assert.match(app, />归档聊天</);
   assert.match(app, />移除项目</);
   assert.match(app, /class="session-item"/);

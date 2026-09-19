@@ -14,7 +14,7 @@ import { readWorkspaceFile, writeWorkspaceFile, replaceInFile, grepSearch } from
 import { decidePermission, modeOptions, normalizeMode } from './permissions.mjs';
 import { loadTranscript, saveTranscript, publicTranscript } from './store.mjs';
 import { parseToolArgs } from './stream.mjs';
-import { handleHistory, handleMode } from './chat.mjs';
+import { handleHistory, handleHitl, handleMode } from './chat.mjs';
 
 test('官方连接按产品选 harness，不合成一张工具表', () => {
   const chat = fs.readFileSync(new URL('./chat.mjs', import.meta.url), 'utf8');
@@ -536,7 +536,8 @@ test('plan 模式拒绝写入，accept-edits 放行文件', () => {
   assert.equal(normalizeMode('claude', 'manual'), 'default');
   assert.deepEqual(modeOptions('codex').map(item => item.id), ['on-request', 'on-failure', 'never', 'untrusted']);
   assert.ok(!modeOptions('claude').some(item => item.id === 'on-request' || item.id === 'manual'));
-  assert.ok(!modeOptions('agy').some(item => item.id === 'bypassPermissions' || item.id === 'never'));
+  assert.ok(modeOptions('agy').some(item => item.id === 'bypassPermissions'));
+  assert.ok(!modeOptions('agy').some(item => item.id === 'never'));
   assert.ok(!modeOptions('grok').some(item => item.id === 'never'));
 });
 
@@ -973,4 +974,9 @@ test('/api/chat 与 /api/test 分开，缺会话拒绝，不把 test 扩成聊�
     await stop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('HITL 必须显式允许或拒绝，缺省不放行', () => {
+  assert.throws(() => handleHitl({ approvalId: 'missing' }), /审批不存在|请明确允许或拒绝/);
+  assert.throws(() => handleHitl({ approvalId: 'x', approved: undefined }), /请明确允许或拒绝|审批不存在/);
 });

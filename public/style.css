@@ -396,12 +396,22 @@ label.one-m input{width:16px;height:16px;margin:0}
 .compose-quota-tip{position:absolute;right:-6px;bottom:calc(100% + 12px);min-width:max-content;padding:10px 14px;border-radius:14px;background:#fff;color:#6b7280;font-size:13px;line-height:1.55;font-weight:400;box-shadow:0 10px 28px #11182724,0 0 0 1px #1118270d;display:flex;flex-direction:column;opacity:0;visibility:hidden;pointer-events:none;z-index:8;white-space:nowrap}
 .compose-quota:hover .compose-quota-tip,.compose-quota:focus-visible .compose-quota-tip{opacity:1;visibility:visible}
 .compose-quota-tip span{display:block}
+.compose-effort-row{display:inline-flex;flex-wrap:wrap;gap:2px;margin-left:4px;align-items:center}
+.compose-effort{border:0;background:transparent;color:#6b7280;border-radius:8px;padding:4px 8px;font-size:12px;line-height:1.3}
+.compose-effort:hover{background:#f3f4f6;border-color:transparent;color:#374151}
+.compose-effort.is-active,.compose-effort.is-active:hover{background:#f3f4f6;color:#111827;font-weight:600}
+.file-picker-item{display:flex;align-items:center;gap:8px}
+.file-kind{width:16px;height:16px;display:inline-grid;place-items:center;flex-shrink:0;color:#7b8090}
+.file-kind svg{width:14px;height:14px}
 .compose-send{width:28px;height:28px;padding:0;border:0;border-radius:999px;background:#111827;color:#fff;display:grid;place-items:center;flex-shrink:0;box-shadow:none;line-height:0}
 .compose-send:hover{background:#000;border-color:transparent;color:#fff}
 .compose-send:disabled{opacity:1;cursor:default;background:#e5e7eb;color:#fff}
 .compose-send.is-stop,.compose-send.is-stop:hover{border-radius:7px;background:#111827;color:#fff;border:0}
-.hitl-card{border:1px solid #ddd7a8;background:#fffbeb;border-radius:12px;padding:14px;margin:0 0 12px}
-.hitl-card pre{max-height:160px;overflow:auto;font-size:11px;background:#fff;padding:8px;border-radius:8px}
+.hitl-card{border:1px solid #e5e7eb;background:#fff;border-radius:16px;padding:14px;margin:0 0 12px;box-shadow:0 1px 2px #00000008}
+.hitl-card strong{font-size:13px;color:#111827}
+.hitl-card p{margin:6px 0 10px;font-size:13px;color:#4b5162}
+.hitl-card pre{max-height:160px;overflow:auto;font-size:11px;background:#f7f8fb;padding:8px;border-radius:8px;margin:0 0 12px}
+.hitl-card .row{display:flex;gap:8px;justify-content:flex-end}
 .q-block{border:0;padding:0 0 10px;margin:0}
 .q-opt{display:flex;flex-direction:column;gap:2px;margin:6px 0;font-size:13px}
 .q-opt input{width:16px;height:16px;margin-right:8px}

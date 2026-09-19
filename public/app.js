@@ -1,9 +1,10 @@
 import {MODEL_GROUPS, connectionsInGroup, connectionGroups} from './model-groups.js';
 import {resolveRequestModel, stripClaudeOneMMarker, connectionModelChoices, preferredConnectionModel, REASONING_LEVELS, REASONING_LABELS, managerSelectionView} from './model-selection.js';
 import {icons, footer, managerForm, managerCards, settingsShell, appSwitcher, accountSwitcher, parseSettingsTab, esc, activeProviderForGroup, managerActorLabel, managerSeriesId} from './shell.js';
+import {fileKind} from './file-icons.js';
 import {renderProviderCard, renderOfficialCard, renderEmptyState} from './provider-card.js';
 import {openProviderModal} from './provider-modal.js';
-import {abortChat, applySessionEvent, chat, chatPanel, chatTerminalLog, chatToolCards, fitCompose, group, groupPanel, liveTasks, loadChatHistory, loadGroupHistory, renderLiveBoard, renderTaskBox, resetChat, resetGroup, resolveHitl, scrollChatToLatest, sendChat, setChatMode, toolFilePath} from './chat.js';
+import {abortChat, applySessionEvent, chat, chatPanel, chatTerminalLog, chatToolCards, fitCompose, group, groupPanel, liveTasks, loadChatHistory, loadGroupHistory, patchCompose, renderLiveBoard, renderTaskBox, resetChat, resetGroup, resolveHitl, scrollChatToLatest, sendChat, setChatMode, toolFilePath} from './chat.js';
 import {notice} from './toast.js';
 
 let state={projects:[],connections:[],official:[],activeProviders:{}}, page=location.hash.startsWith('#settings')?'settings':'workspace', selectedSession='', selectedPartition='', open=new Set();
@@ -87,7 +88,17 @@ function watchSessionEvents(id){
 function inGroupChat(sessionId){
  return selectedSession===sessionId && page==='workspace' && !selectedPartition;
 }
+function applyEffortFromConnection(connection, group, source){
+ const view=managerSelectionView(connection||{}, group||'', source||null);
+ chat.effortLevels=view.levels||[];
+ if(!chat.effort && view.effort) chat.effort=view.effort;
+ if(chat.effort && chat.effortLevels.length && !chat.effortLevels.includes(chat.effort)) chat.effort=view.effort||'';
+}
+
 function groupChatPanel(s,p){
+ const conn=findConnection(state.manager?.connectionId);
+ const group=connectionGroups(conn||{})[0]||managerSeriesId({manager:state.manager});
+ applyEffortFromConnection(conn, group, state.manager);
  return groupPanel({session:s, projectPath:p?.path||'', managerReady:Boolean(state.manager?.model), managerLabel:managerActorLabel(state)});
 }
 function setSessionListOpen(sessionId, shouldOpen, details){
@@ -106,7 +117,8 @@ function projectMenuItems(p){
   <button type="button" role="menuitem" data-action="pin-project" data-id="${p.id}">${icons.pin}<span>${p.pinned?'取消置顶':'置顶'}</span></button>
   <button type="button" role="menuitem" data-action="rename-project" data-id="${p.id}">${icons.edit}<span>编辑</span></button>
   <div class="project-menu-sep"></div>
-  <button type="button" role="menuitem" data-action="reveal-project" data-id="${p.id}">${icons.folder}<span>在资源管理器中打开</span></button>
+  <button type="button" role="menuitem" data-action="reveal-project" data-id="${p.id}">${icons.folder}<span>在访达 / 资源管理器中打开</span></button>
+  <button type="button" role="menuitem" data-action="relocate-project" data-id="${p.id}">${icons.folder}<span>更改项目位置</span></button>
   ${archiveBtn}
   <div class="project-menu-sep"></div>
   <button type="button" role="menuitem" class="danger" data-action="remove-project" data-id="${p.id}">${icons.close}<span>移除项目</span></button>
@@ -336,7 +348,9 @@ function filePicker(){
  for(const entry of [...dirs, ...files]){
   const target=entry.relative||entry.path||entry.name;
   const act=entry.type==='directory'?'picker-enter':'open-file';
-  rows.push(`<button type="button" class="file-picker-item" data-action="${act}" data-id="${esc(target)}">${esc(entry.name)}${entry.type==='directory'?'/':''}</button>`);
+  const kind=fileKind(entry.name, entry.type);
+  const mark=kind==='directory'?icons.folder:icons.generic;
+  rows.push(`<button type="button" class="file-picker-item" data-action="${act}" data-id="${esc(target)}"><span class="file-kind" aria-hidden="true">${mark}</span><span>${esc(entry.name)}${entry.type==='directory'?'/':''}</span></button>`);
  }
  return `<div class="file-picker" role="dialog" aria-label="打开文件">
   <form class="file-picker-form" data-picker-form>
@@ -360,9 +374,10 @@ function workspace(){
  const s=session(),p=state.projects.find(p=>p.sessions.some(x=>x.id===s?.id)),a=s?.partitions.find(p=>p.id===selectedPartition);
  if(!s){
   if(state.projects.length){
-   return `<div class="welcome"><div class="symbol"><img src="/icons/agents-gzt.svg" alt="" aria-hidden="true"></div><div class="eyebrow">LOCAL WORKSPACE</div><h1>打开会话进入工作区</h1><p class="muted">在左侧展开项目并点选会话，中间显示对话。<br>扩展在主工作区内打开，用来管理分区和工具。</p></div>`;
+   return `<div class="welcome"><div class="symbol"><img src="/icons/skerry.svg" alt="" aria-hidden="true"></div><div class="eyebrow">LOCAL WORKSPACE</div><h1>打开会话进入工作区</h1><p class="muted">在左侧展开项目并点选会话，中间显示对话。<br>扩展在主工作区内打开，用来管理分区和工具。</p></div>`;
   }
-  return `<div class="welcome"><div class="symbol"><img src="/icons/agents-gzt.svg" alt="" aria-hidden="true"></div><div class="eyebrow">LOCAL WORKSPACE</div><h1>从一个本地项目开始</h1><p class="muted">选择项目文件夹，在项目下创建会话，<br>会话会自动带上管理者 AI。</p><button class="primary" data-action="project">选择本地项目</button></div>`;
+  const root=state.layout?.workspaceRoot||'';
+  return `<div class="welcome"><div class="symbol"><img src="/icons/skerry.svg" alt="" aria-hidden="true"></div><div class="eyebrow">LOCAL WORKSPACE</div><h1>从一个本地项目开始</h1><p class="muted">项目放在工作区母目录下，不要直接摊在 Downloads 根上。<br>${root?`当前母目录：${esc(root)}`:''}</p><button class="primary" data-action="project">选择本地项目</button><button class="secondary" data-action="change-workspace-root">更改工作区母目录</button></div>`;
  }
  if(workspaceTab!=='conversation' && openFiles.some(f=>f.path===workspaceTab)){
   return filePane(workspaceTab);
@@ -376,6 +391,15 @@ function workspace(){
  const routes=talkingManager
   ? `<div class="chat-routes muted">${esc(p.path)} · 管理者AI${actor?` · ${esc(actor)}`:''}</div>`
   : `<div class="chat-routes muted">${a.routes.map(r=>{const c=[...state.connections,...state.official].find(c=>c.id===r.connectionId);return `${esc(c?.name||'连接不可用')} · ${esc(r.model)}`;}).join(' · ')}</div>`;
+ if(talkingManager){
+  const conn=findConnection(state.manager?.connectionId);
+  const group=connectionGroups(conn||{})[0]||managerSeriesId({manager:state.manager});
+  applyEffortFromConnection(conn, group, state.manager);
+ }else if(a?.routes?.[0]){
+  const conn=findConnection(a.routes[0].connectionId);
+  const group=connectionGroups(conn||{})[0];
+  applyEffortFromConnection(conn, group, a.routes[0]);
+ }
  return `<div class="chat-page">${routes}${chatPanel({session:s,partition:talkingManager?null:a,managerReady, managerLabel:talkingManager?actor:''})}</div>`;
 }
 
@@ -704,9 +728,15 @@ function openEditModal(conn){
 }
 
 const polling=new Map();
+function stopLoginWatch(id){
+ if(!polling.has(id))return;
+ const job=polling.get(id);
+ clearTimeout(job.timer);
+ polling.delete(id);
+}
 function openAuthWindow(){
  try{
-  const w=window.open('','agents-gzt-oauth');
+  const w=window.open('','skerry-oauth');
   if(w){
    try{
     w.document.open();
@@ -719,41 +749,49 @@ function openAuthWindow(){
 }
 
 async function watchLogin(id,result){
- if(polling.has(id))clearInterval(polling.get(id));
- let attempts=0,running=false;
- const timer=setInterval(async()=>{
-  if(running)return;
-  running=true;
+ stopLoginWatch(id);
+ let attempts=0;
+ const device=result.flow==='device';
+ const wait=()=>Math.max(5,Number(result.interval)||5)*1000;
+ const job={timer:0};
+ const tick=async()=>{
+  if(document.hidden){
+   job.timer=setTimeout(tick,wait());
+   return;
+  }
   try{
-   if(result.flow==='device')await api('auth/poll',{id,transactionId:result.transactionId});
+   if(device)await api('auth/poll',{id,transactionId:result.transactionId});
    const latest=await api('state');
-   const c=latest.official.find(c=>c.id===id);
+   const c=latest.official.find(item=>item.id===id);
    const transaction=c?.transaction?.transactionId===result.transactionId?c.transaction:null;
    const completed=['cli','external'].includes(result.flow)
     ? c?.connected&&!c.expired
     : transaction?.status==='completed'&&c?.connected&&!c.expired;
    if(completed){
-    clearInterval(timer);
-    polling.delete(id);
+    stopLoginWatch(id);
     state=latest;
     render();
     notice(c?.email?`已登录 ${c.email}`:'官方账号登录成功');
-   }else if(transaction?.status==='error'){
-    clearInterval(timer);
-    polling.delete(id);
-    notice('官方登录失败：'+(transaction.error?.message||'请重新登录'));
-   }else if(++attempts>120){
-    clearInterval(timer);
-    polling.delete(id);
-    notice('登录等待结束，可重新登录');
+    return;
    }
+   if(transaction?.status==='error'){
+    stopLoginWatch(id);
+    notice('官方登录失败：'+(transaction.error?.message||'请重新登录'));
+    return;
+   }
+   if(++attempts>120){
+    stopLoginWatch(id);
+    notice('登录等待结束，可重新登录');
+    return;
+   }
+   job.timer=setTimeout(tick,wait());
   }catch(e){
-   clearInterval(timer);
-   polling.delete(id);
+   stopLoginWatch(id);
    notice('登录未完成：'+e.message);
-  }finally{running=false;}
- },Math.max(5,result.interval||5)*1000);
- polling.set(id,timer);
+  }
+ };
+ polling.set(id,job);
+ job.timer=setTimeout(tick,wait());
 }
 
 document.addEventListener('click',async e=>{
@@ -770,8 +808,8 @@ document.addEventListener('click',async e=>{
  }
  if(chat.modeMenuOpen && !e.target.closest('.compose-mode-wrap')){
   chat.modeMenuOpen=false;
-  if(!b){render();return;}
-  if(b.dataset.action!=='chat-mode' && b.dataset.action!=='chat-mode-set') render();
+  if(!b){patchCompose();return;}
+  if(b.dataset.action!=='chat-mode' && b.dataset.action!=='chat-mode-set') patchCompose();
  }
  if(!b)return;
  const {action,id}=b.dataset;
@@ -931,9 +969,22 @@ document.addEventListener('click',async e=>{
   if(action==='project'){
    notice('请在系统文件夹选择器中选择本地项目');
    const before=new Set(state.projects.map(p=>p.id));
-   state=await api('project',{});
+   state=await api('project',{path:state.layout?.workspaceRoot||''});
    const added=state.projects.find(p=>!before.has(p.id));
    if(added) open.add(added.id);
+   render();
+  }
+  if(action==='change-workspace-root'){
+   notice('请选择工作区母目录');
+   state=await api('layout',{workspaceRoot:state.layout?.defaultWorkspaceRoot||''});
+   notice(state.layout?.workspaceRoot?`工作区母目录：${state.layout.workspaceRoot}`:'已更新工作区母目录');
+   render();
+  }
+  if(action==='relocate-project'){
+   projectMenu='';
+   notice('请选择该项目的新位置');
+   state=await api('project/relocate',{id});
+   notice('已更新项目位置');
    render();
   }
   if(action==='new-session'){
@@ -1037,14 +1088,19 @@ document.addEventListener('click',async e=>{
   }
   if(action==='chat-mode'){
    chat.modeMenuOpen=!chat.modeMenuOpen;
-   render();
+   patchCompose();
    return;
   }
   if(action==='chat-mode-set'){
    if(!selectedSession)return;
    chat.modeMenuOpen=false;
    await setChatMode(api,selectedSession,workerChatId(),b.dataset.mode);
-   render();
+   patchCompose();
+   return;
+  }
+  if(action==='chat-effort'){
+   chat.effort=b.dataset.effort||'';
+   patchCompose();
    return;
   }
   if(action==='chat-abort'){
@@ -1121,7 +1177,7 @@ document.addEventListener('click',async e=>{
   if(action==='disconnect'){
    if(!confirm('退出后将删除工作台中保存的登录凭证。'))return;
    await api('auth/disconnect',{id});
-   if(polling.has(id)){clearInterval(polling.get(id));polling.delete(id);}
+   stopLoginWatch(id);
    await refresh();
    notice('已退出登录');
   }

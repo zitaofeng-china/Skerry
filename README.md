@@ -3,7 +3,7 @@
 **Skerry** 是一款面向本地项目的多 AI 协作工作台。它把项目、会话、AI 分区、管理者 AI 和执行会话组织在同一个桌面界面中，让 AI 能够在明确的权限范围内查看项目、修改文件、执行命令，并将执行结果返回到会话中。
 
 > 当前版本：`0.1.0`
-> 运行平台：Windows 10/11
+> 运行平台：Windows 10/11 与 macOS
 > 项目状态：早期版本，适合本地开发验证
 
 ## 项目定位
@@ -80,10 +80,10 @@ Skerry 支持官方登录和自定义供应商连接：
 ## 安全与数据存储
 
 - 本地服务默认只监听 `127.0.0.1`。
-- API 密钥和 OAuth 令牌使用 Windows DPAPI 的当前用户保护。
-- 普通工作区配置存放在 `.data/workspace.json`，其中不保存密钥原文。
+- API 密钥和 OAuth 令牌：Windows 用 DPAPI，macOS 用钥匙串（服务名 Skerry）。测试或显式指定目录时退回文件。
+- 软件配置默认在 `~/.skerry/`（可用 `AGENTS_DATA_DIR` 覆盖），其中不保存密钥原文。
 - 浏览器开发版和桌面版使用独立的数据目录。
-- 桌面版数据默认位于：`%APPDATA%/com.agentsgzt.workbench/`
+- 项目工作区默认母目录：`~/Downloads/Skerry工作区/`，可整体或单个项目改位置。
 - Skerry 不会自动复制旧项目的用户数据或登录凭据。
 - 远程 API 地址要求使用 HTTPS；仅本机地址允许使用 HTTP。
 
@@ -169,14 +169,17 @@ npm run desktop:build
 
 ```text
 src-tauri/target/release/bundle/nsis/Skerry_0.1.0_x64-setup.exe
+src-tauri/target/release/bundle/dmg/Skerry_0.1.0_aarch64.dmg
 ```
+
+macOS 代码签名不要写进仓库。本机有开发者证书时，用环境变量或本地覆盖配置，不要提交 Apple ID、Team ID 或 `signingIdentity`。
 
 这是面向普通用户的 Windows x64 安装包，适合作为 GitHub Release 的主要下载文件。
 
 免安装测试文件位于：
 
 ```text
-src-tauri/target/release/agents-gzt.exe
+src-tauri/target/release/skerry.exe
 ```
 
 该文件需要与构建产生的运行时资源配合使用，不建议从安装包中单独提取后分发。Windows 安装包当前没有配置代码签名，首次安装时可能显示发布者未验证提示。

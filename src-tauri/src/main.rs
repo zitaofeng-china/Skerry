@@ -20,6 +20,31 @@ impl Drop for Service {
         }
     }
 }
+
+fn node_bin(runtime: &std::path::Path) -> std::path::PathBuf {
+    if cfg!(windows) {
+        runtime.join("node/node.exe")
+    } else {
+        runtime.join("node/node")
+    }
+}
+
+fn data_dir() -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    if let Ok(dir) = std::env::var("AGENTS_DATA_DIR") {
+        if !dir.trim().is_empty() {
+            return Ok(std::path::PathBuf::from(dir));
+        }
+    }
+    let home = dirs_home().ok_or("无法解析用户目录")?;
+    Ok(home.join(".skerry"))
+}
+
+fn dirs_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
@@ -35,9 +60,9 @@ fn main() {
             } else {
                 app.path().resource_dir()?.join("runtime")
             };
-            let data = app.path().app_data_dir()?;
+            let data = data_dir()?;
             std::fs::create_dir_all(&data)?;
-            let mut command = Command::new(runtime.join("node/node.exe"));
+            let mut command = Command::new(node_bin(&runtime));
             command
                 .arg(runtime.join("src/server.mjs"))
                 .current_dir(&runtime)

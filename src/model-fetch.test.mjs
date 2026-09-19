@@ -278,7 +278,7 @@ test('未登录官方账号时 /api/models 拒绝拉取', async () => {
       body: JSON.stringify({ id: 'official-codex' }),
     });
     assert.equal(res.status, 400);
-    assert.match((await res.json()).error, /登录官方账号/);
+    assert.match((await res.json()).error, /登录官方账号|重新登录/);
   } finally {
     if (child?.exitCode === null) {
       const done = once(child, 'exit');

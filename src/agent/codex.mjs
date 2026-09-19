@@ -217,10 +217,11 @@ export async function execute(name, args, ctx) {
         waitMsBeforeAsync: Number(a.yield_time_ms) || 15000,
         timeoutMs: 0,
         allowOutside,
+        abortSignal: ctx.abortSignal,
       });
     case 'write_stdin': {
       if (a.chars) return writeTaskStdin(a.session_id, a.chars);
-      const task = listBackgroundTasks().find(t => t.id === a.session_id);
+      const task = listBackgroundTasks(ctx.workspace).find(t => t.id === a.session_id);
       return task || { ok: false, error: 'Unknown session_id' };
     }
     case 'apply_patch': {
@@ -244,7 +245,7 @@ export async function execute(name, args, ctx) {
       return { ok: true, ...snap, messages: ctx.transcript.messages.length };
     }
     case 'new_context_window':
-      ctx.transcript.messages = ctx.transcript.messages.slice(-2);
+      ctx.transcript.messages = [];
       return { ok: true, reset: true };
     case 'sleep':
       await new Promise(r => setTimeout(r, Math.min(Number(a.duration_ms) || 0, 30000)));

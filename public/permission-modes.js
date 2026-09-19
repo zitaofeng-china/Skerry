@@ -5,8 +5,8 @@ const CATALOG = {
     defaultMode: 'on-request',
     modes: [
       { id: 'on-request', icon: 'hand', chip: '请求批准', label: '请求批准', description: '编辑外部文件和使用互联网时始终询问', warn: false },
-      { id: 'on-failure', icon: 'shield', chip: '帮我批准', label: '帮我批准', description: '仅对检测到的风险操作请求批准', warn: false },
-      { id: 'never', icon: 'warn', chip: '完全访问', label: '完全访问权限', description: '限制地访问互联网和你电脑上的任何文件', warn: true },
+      { id: 'on-failure', icon: 'shield', chip: '帮我批准', label: '帮我批准', description: '普通读写可过；删文件、提权、管道下载执行仍要问', warn: false },
+      { id: 'never', icon: 'warn', chip: '完全访问', label: '完全访问权限', description: '全自动：文件、命令和网络都不再询问', warn: true },
       { id: 'untrusted', icon: 'lock', chip: '不信任', label: '不信任', description: '除读取外，文件、命令和网络都要先问', warn: false },
     ],
   },
@@ -18,9 +18,9 @@ const CATALOG = {
       { id: 'default', icon: 'hand', chip: '默认', label: '默认', description: '危险工具先问，工作区内只读自动过', warn: false },
       { id: 'acceptEdits', icon: 'edit', chip: '接受编辑', label: '接受编辑', description: '文件编辑自动过，命令和联网仍要问', warn: false },
       { id: 'plan', icon: 'plan', chip: '计划', label: '计划', description: '只读调研，确认方案后再改', warn: false },
-      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '分类器代答大部分权限，高风险仍可能问', warn: false },
+      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '工作区内写文件和普通命令可过，高风险仍要问', warn: false },
       { id: 'dontAsk', icon: 'deny', chip: '不问', label: '不问', description: '未预批的一律拒绝，适合无人值守', warn: false },
-      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '跳过确认；deny 规则仍然生效', warn: true },
+      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '全自动：跳过确认', warn: true },
     ],
   },
   grok: {
@@ -31,9 +31,9 @@ const CATALOG = {
       { id: 'default', icon: 'hand', chip: '默认', label: '默认', description: '只读自动过，改动要问', warn: false },
       { id: 'acceptEdits', icon: 'edit', chip: '接受编辑', label: '接受编辑', description: '文件编辑不问，命令和联网仍要问', warn: false },
       { id: 'plan', icon: 'plan', chip: '计划', label: '计划', description: '只读调研，确认后再改', warn: false },
-      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '分类器放行；过不了的会失败而不是假放行', warn: false },
+      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '工作区内写文件和普通命令可过，高风险仍要问', warn: false },
       { id: 'dontAsk', icon: 'deny', chip: '不问', label: '不问', description: '只跑预批和内置只读', warn: false },
-      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '跳过普通询问；deny 与 hooks 仍生效', warn: true },
+      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '全自动：跳过普通询问', warn: true },
     ],
   },
   agy: {
@@ -44,6 +44,8 @@ const CATALOG = {
       { id: 'default', icon: 'hand', chip: '默认', label: '默认', description: '写文件弹 diff，等你批准', warn: false },
       { id: 'accept-edits', icon: 'edit', chip: '接受编辑', label: '接受编辑', description: '文件读写自动落盘，子任务同样继承', warn: false },
       { id: 'plan', icon: 'plan', chip: '计划', label: '计划', description: '只读调研，交出方案并确认后再改', warn: false },
+      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '工作区内写文件和普通命令可过，高风险仍要问', warn: false },
+      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '全自动：跳过确认', warn: true },
     ],
   },
   custom: {
@@ -52,6 +54,8 @@ const CATALOG = {
     defaultMode: 'default',
     modes: [
       { id: 'default', icon: 'hand', chip: '默认', label: '默认', description: '该协议没有独立权限档，按默认策略询问', warn: false },
+      { id: 'auto', icon: 'auto', chip: '自动', label: '自动', description: '工作区内写文件和普通命令可过，高风险仍要问', warn: false },
+      { id: 'bypassPermissions', icon: 'warn', chip: '完全访问', label: '完全访问', description: '全自动：跳过确认', warn: true },
     ],
   },
 };
@@ -72,8 +76,10 @@ export function aliasMode(vendor, mode) {
   const raw = String(mode || '').trim();
   if (!raw) return '';
   if (raw === 'manual') return 'default';
-  if (raw === 'always-approve') return 'bypassPermissions';
-  if (raw === 'always-proceed') return vendor === 'agy' ? 'default' : 'bypassPermissions';
+  if (raw === 'always-approve' || raw === 'always-proceed') return 'bypassPermissions';
+  if (raw === 'full-auto' || raw === 'full_access') {
+    return vendor === 'codex' ? 'never' : 'bypassPermissions';
+  }
   if (vendor === 'agy' && raw === 'acceptEdits') return 'accept-edits';
   if ((vendor === 'claude' || vendor === 'grok') && raw === 'accept-edits') return 'acceptEdits';
   return raw;

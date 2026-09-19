@@ -3,9 +3,9 @@ import * as claude from './claude.mjs';
 import * as grok from './grok.mjs';
 import * as codex from './codex.mjs';
 import * as custom from './custom.mjs';
-import { decidePermission, normalizeMode, cycleMode, classifyRisk, planWritablePath } from './permissions.mjs';
+import { decidePermission, normalizeMode, cycleMode, classifyRisk, planWritablePath, commandLineOf, isFullAccess } from './permissions.mjs';
 import { loadSkills, loadRules } from './context.mjs';
-import { formatToolResult } from './workspace-io.mjs';
+import { formatToolResult, resolveWorkspacePath } from './workspace-io.mjs';
 import { geminiTool, claudeTool, openaiTool, responsesTool, strProp, arg } from './stream.mjs';
 import { appendMessage, publicTranscript, saveTranscript } from './store.mjs';
 import { MODEL_GROUPS, connectionGroups } from '../../public/model-groups.js';
@@ -199,20 +199,38 @@ function applySlash(text, transcript, vendor) {
   return { text: raw, slash: '' };
 }
 
+function toolPathOf(args = {}) {
+  return String(args.file_path || args.TargetFile || args.target_file || args.path || args.DirectoryPath || args.workdir || args.cwd || '').trim();
+}
+
+function toolOutside(ctx, args, kind) {
+  if (kind === 'net' || kind === 'ask' || kind === 'none') return false;
+  const raw = toolPathOf(args);
+  if (!raw) return false;
+  try {
+    return resolveWorkspacePath(ctx.workspace, raw, { allowOutside: true }).outside;
+  } catch {
+    return false;
+  }
+}
+
 async function approve(ctx, name, args, kind) {
   const vendor = toolVendor(ctx);
-  const outside = false;
+  const outside = toolOutside(ctx, args, kind);
+  const command = kind === 'exec' ? commandLineOf(args) : '';
   let decision = decidePermission({
     vendor,
     mode: ctx.transcript.mode,
     kind,
     outsideWorkspace: outside,
+    extraAuthorized: Boolean(ctx.allowOutside) || isFullAccess(vendor, ctx.transcript.mode),
     planLocked: ctx.transcript.mode === 'plan' && !planWritablePath(vendor, JSON.stringify(args || {})),
+    command,
   });
   if (ctx.transcript.mode === 'plan' && kind === 'write' && planWritablePath(vendor, args?.file_path || args?.TargetFile || args?.path || '')) {
     decision = { action: 'allow' };
   }
-  if (decision.action === 'allow') return { approved: true, autoApproved: true };
+  if (decision.action === 'allow') return { approved: true, autoApproved: true, extraAuthorized: Boolean(ctx.allowOutside) };
   if (decision.action === 'deny') return { approved: false, reason: decision.reason || '当前模式拒绝该工具' };
   const summary = adapter(vendor).summarize?.(name, args) || `调用 ${name}`;
   const approval = ctx.hitl
@@ -223,10 +241,13 @@ async function approve(ctx, name, args, kind) {
       toolName: name,
       args,
       summary,
-      riskLevel: classifyRisk(kind),
+      riskLevel: classifyRisk(kind, decision.commandRisk),
       kind,
+      outsideWorkspace: outside,
+      commandRisk: decision.commandRisk || null,
     })
     : { approved: false, reason: '无 HITL 通道' };
+  if (approval.approved && outside) ctx.allowOutside = true;
   ctx.emit?.('hitl_resolved', { toolName: name, approved: approval.approved, reason: approval.reason || '' });
   return approval;
 }

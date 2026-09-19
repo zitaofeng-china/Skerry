@@ -7,12 +7,28 @@ const MAX_READ = 512 * 1024;
 const MAX_GREP = 200;
 const MAX_WALK = 8000;
 
+function realExisting(target) {
+  let dir = path.resolve(target);
+  const parts = [];
+  while (true) {
+    try {
+      return parts.length ? path.join(fs.realpathSync(dir), ...parts) : fs.realpathSync(dir);
+    } catch {
+      const parent = path.dirname(dir);
+      if (parent === dir) return path.resolve(target);
+      parts.unshift(path.basename(dir));
+      dir = parent;
+    }
+  }
+}
+
 export function insideWorkspace(workspace, target) {
-  const root = path.resolve(workspace).replace(/[\\/]+$/, '');
-  const resolved = path.resolve(target);
-  const a = root.toLowerCase();
-  const b = resolved.toLowerCase();
-  return b === a || b.startsWith(a + path.sep);
+  const root = realExisting(workspace).replace(/[\\/]+$/, '');
+  const resolved = realExisting(target);
+  const a = process.platform === 'win32' ? root.toLowerCase() : root;
+  const b = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  const sep = path.sep;
+  return b === a || b.startsWith(a + sep);
 }
 
 export function resolveWorkspacePath(workspace, input, { allowOutside = false } = {}) {
@@ -140,7 +156,7 @@ function globToRegExp(pattern) {
   for (let i = 0; i < src.length; i += 1) {
     const ch = src[i];
     if (ch === '*' && src[i + 1] === '*') {
-      out += src[i + 2] === '/' ? '(?:.*/)?': '.*';
+      out += src[i + 2] === '/' ? '(?:.*/)?' : '.*';
       i += src[i + 2] === '/' ? 2 : 1;
     } else if (ch === '*') out += '[^/]*';
     else if (ch === '?') out += '[^/]';
@@ -211,23 +227,57 @@ export function formatToolResult(result) {
 
 const running = new Map();
 
-export function listBackgroundTasks() {
-  return [...running.values()].map(task => ({
+function taskView(task) {
+  return {
     id: task.id,
     command: task.command,
     cwd: task.cwd,
+    workspace: task.workspace,
     running: task.running,
     exitCode: task.exitCode,
     output: task.output.slice(-8000),
-  }));
+  };
+}
+
+export function listBackgroundTasks(workspace) {
+  const all = [...running.values()];
+  const filtered = workspace ? all.filter(task => task.workspace === workspace) : all;
+  return filtered.map(taskView);
+}
+
+export function killProcessTree(child) {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    try { spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }).unref(); } catch { /* ignore */ }
+    try { child.kill(); } catch { /* ignore */ }
+    return;
+  }
+  try { process.kill(-child.pid, 'SIGTERM'); } catch { /* ignore */ }
+  try { child.kill('SIGTERM'); } catch { /* ignore */ }
+  setTimeout(() => {
+    try { process.kill(-child.pid, 'SIGKILL'); } catch { /* ignore */ }
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
+  }, 1500).unref?.();
 }
 
 export function killBackgroundTask(id) {
   const task = running.get(id);
   if (!task) return { ok: false, error: `Unknown task: ${id}` };
-  try { task.child.kill(); } catch { /* already gone */ }
+  killProcessTree(task.child);
   task.running = false;
   return { ok: true, id };
+}
+
+export function abortWorkspaceCommands(workspace) {
+  let n = 0;
+  for (const task of running.values()) {
+    if (workspace && task.workspace !== workspace) continue;
+    if (!task.running) continue;
+    killProcessTree(task.child);
+    task.running = false;
+    n += 1;
+  }
+  return n;
 }
 
 export function writeTaskStdin(id, text) {
@@ -237,42 +287,63 @@ export function writeTaskStdin(id, text) {
   return { ok: true, id };
 }
 
+function spawnShell(line, workdir) {
+  if (process.platform === 'win32') {
+    return spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', line], {
+      cwd: workdir,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+  const shell = process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash';
+  return spawn(shell, ['-lc', line], {
+    cwd: workdir,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
+    env: { ...process.env, LANG: process.env.LANG || 'en_US.UTF-8' },
+  });
+}
+
 export function runWorkspaceCommand(workspace, command, {
   cwd,
   timeoutMs = 30000,
   background = false,
   waitMsBeforeAsync = 0,
   allowOutside = false,
+  abortSignal,
 } = {}) {
   const line = String(command || '').trim();
   if (!line) return Promise.resolve({ ok: false, error: 'Missing command' });
   const workdir = resolveWorkspacePath(workspace, cwd || '.', { allowOutside }).target;
   const id = crypto.randomUUID();
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', line], {
-    cwd: workdir,
-    windowsHide: true,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  const task = { id, command: line, cwd: workdir, child, running: true, exitCode: null, output: '' };
+  const child = spawnShell(line, workdir);
+  const task = { id, command: line, cwd: workdir, workspace, child, running: true, exitCode: null, output: '' };
   running.set(id, task);
   child.stdout.on('data', chunk => { task.output += chunk.toString('utf8'); if (task.output.length > 200000) task.output = task.output.slice(-150000); });
   child.stderr.on('data', chunk => { task.output += chunk.toString('utf8'); if (task.output.length > 200000) task.output = task.output.slice(-150000); });
+  const onAbort = () => {
+    if (task.running) killProcessTree(child);
+  };
+  if (abortSignal) {
+    if (abortSignal.aborted) onAbort();
+    else abortSignal.addEventListener('abort', onAbort, { once: true });
+  }
   const done = new Promise(resolve => {
     child.on('close', code => {
       task.running = false;
       task.exitCode = code;
+      abortSignal?.removeEventListener?.('abort', onAbort);
       resolve({ ok: code === 0, id, command: line, cwd: workdir, exitCode: code, output: task.output.slice(-12000), background: false });
     });
     child.on('error', error => {
       task.running = false;
+      abortSignal?.removeEventListener?.('abort', onAbort);
       resolve({ ok: false, id, command: line, error: error.message, output: task.output, background: false });
     });
   });
   if (timeoutMs > 0) {
     const timer = setTimeout(() => {
-      if (task.running) {
-        try { child.kill(); } catch { /* ignore */ }
-      }
+      if (task.running) killProcessTree(child);
     }, timeoutMs);
     done.finally(() => clearTimeout(timer));
   }
@@ -290,11 +361,41 @@ export function runWorkspaceCommand(workspace, command, {
   return done;
 }
 
+const BLOCKED_HOSTS = new Set([
+  'localhost', 'localhost.', '0.0.0.0', '::1', '::ffff:127.0.0.1',
+]);
+
+function hostBlocked(hostname) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '').toLowerCase();
+  if (!host) return true;
+  if (BLOCKED_HOSTS.has(host)) return true;
+  if (host.endsWith('.localhost') || host.endsWith('.local')) return true;
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true;
+  if (/^172\.(1[6-9]|2\d|3[0-1])\./.test(host)) return true;
+  if (host === 'metadata.google.internal' || host.endsWith('.internal')) return true;
+  return false;
+}
+
 export async function fetchUrlText(url) {
   const parsed = new URL(String(url || ''));
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error('Only http(s) URLs are allowed');
-  const response = await fetch(parsed.href, { redirect: 'follow', signal: AbortSignal.timeout(20000), headers: { 'User-Agent': 'AgentsGZT/0.1' } });
+  if (parsed.username || parsed.password) throw new Error('URL credentials are not allowed');
+  if (hostBlocked(parsed.hostname)) throw new Error('That host is not allowed');
+  const response = await fetch(parsed.href, { redirect: 'error', signal: AbortSignal.timeout(20000), headers: { 'User-Agent': 'Skerry/0.1' } });
   const text = await response.text();
   const stripped = text.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
   return { ok: response.ok, status: response.status, url: parsed.href, text: stripped.slice(0, 20000) };
+}
+
+export function fileKindIcon(name) {
+  const ext = path.extname(String(name || '')).toLowerCase();
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.ico', '.bmp'].includes(ext)) return 'image';
+  if (['.md', '.markdown', '.txt', '.rst'].includes(ext)) return 'text';
+  if (['.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.go', '.rs', '.java', '.kt', '.swift', '.c', '.h', '.cpp', '.cs', '.rb', '.php', '.sh', '.zsh', '.ps1'].includes(ext)) return 'code';
+  if (['.json', '.yml', '.yaml', '.toml', '.xml', '.csv'].includes(ext)) return 'data';
+  if (['.html', '.css', '.scss'].includes(ext)) return 'web';
+  if (['.pdf'].includes(ext)) return 'pdf';
+  if (['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx'].includes(ext)) return 'office';
+  if (['.zip', '.tar', '.gz', '.7z', '.rar'].includes(ext)) return 'archive';
+  return 'file';
 }

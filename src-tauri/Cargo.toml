@@ -1,5 +1,5 @@
 [package]
-name = "agents-gzt"
+name = "skerry"
 version = "0.1.0"
 description = "Minimal local project and model workbench"
 edition = "2021"

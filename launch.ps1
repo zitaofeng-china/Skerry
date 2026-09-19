@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
-$exe = Join-Path $PSScriptRoot 'src-tauri\target\release\agents-gzt.exe'
+$exe = Join-Path $PSScriptRoot 'src-tauri\target\release\skerry.exe'
 if (-not (Test-Path -LiteralPath $exe)) {
     Write-Host '首次启动需要构建桌面程序。'
     & npm.cmd run desktop:build

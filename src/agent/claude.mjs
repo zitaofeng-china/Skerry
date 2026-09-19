@@ -287,6 +287,7 @@ export async function execute(name, args, ctx) {
         timeoutMs: a.timeout || 120000,
         background: Boolean(a.run_in_background),
         allowOutside,
+        abortSignal: ctx.abortSignal,
       });
     case 'WebFetch': {
       const page = await fetchUrlText(a.url);
@@ -327,7 +328,7 @@ export async function execute(name, args, ctx) {
       return { ok: true, task };
     }
     case 'TaskOutput':
-      return { ok: true, tasks: listBackgroundTasks().filter(t => t.id === a.task_id) };
+      return { ok: true, tasks: listBackgroundTasks(ctx.workspace).filter(t => t.id === a.task_id) };
     case 'TaskStop':
       return killBackgroundTask(a.task_id);
     case 'SendMessage':

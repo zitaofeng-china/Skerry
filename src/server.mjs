@@ -8,19 +8,31 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { saveSecret, loadSecret, hasSecret, deleteSecret } from './secret-store.mjs';
 import { attachModel, selectManager, ensureManagerPartition, groupOfConnection, snapshotManagerSelection, managerPayloadForConnection } from './core.mjs';
 import { applyRequestTimezone, applyResponseTimezone, ensureSessionTimezone, pickSessionTimezone } from './session-timezone.mjs';
 import { handleAbort, handleChat, handleGroupHistory, handleHistory, handleHitl, handleMode, handleSessionEvents } from './agent/chat.mjs';
 import { collectSessionArtifacts } from './agent/artifacts.mjs';
-import { listWorkspaceDir, previewWorkspaceFile } from './agent/workspace-io.mjs';
+import { listWorkspaceDir, previewWorkspaceFile, fileKindIcon } from './agent/workspace-io.mjs';
+import { dataDir, workspaceStatePath, workspaceRoot, ensureWorkspaceRoot, writeConfig, readConfig, publicDirSafe, defaultWorkspaceRoot } from './paths.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.chdir(root);
-const file = path.join(process.env.AGENTS_DATA_DIR || path.join(root, '.data'), 'workspace.json');
+if (!process.env.AGENTS_DATA_DIR) process.env.AGENTS_DATA_DIR = dataDir();
+const file = workspaceStatePath();
 fs.mkdirSync(path.dirname(file), {recursive:true});
-let state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file,'utf8')) : {projects:[],connections:[]};
+function loadState() {
+  if (!fs.existsSync(file)) return {projects:[],connections:[]};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file,'utf8'));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {projects:[],connections:[]};
+    return {projects: Array.isArray(parsed.projects)?parsed.projects:[], connections: Array.isArray(parsed.connections)?parsed.connections:[], ...parsed};
+  } catch {
+    return {projects:[],connections:[]};
+  }
+}
+let state = loadState();
 const persist = () => { fs.writeFileSync(file+'.tmp',JSON.stringify(state,null,2)); fs.renameSync(file+'.tmp',file); };
 function migrateLegacyProtocols() {
   let changed = false;
@@ -36,6 +48,16 @@ if (migrateLegacyProtocols()) persist();
 const run = promisify(execFile);
 let port = Number(process.env.PORT || 4317);
 let origin = `http://127.0.0.1:${port}`;
+function layoutInfo() {
+  const cfg = readConfig();
+  return {
+    dataDir: path.dirname(file),
+    workspaceRoot: workspaceRoot(),
+    defaultWorkspaceRoot: defaultWorkspaceRoot(),
+    platform: process.platform,
+  };
+}
+
 function clean() {
   const loggedOut=new Set(state.loggedOutOfficial||[]);
   const officialConfigs=state.officialModelConfigs||{};
@@ -44,7 +66,26 @@ function clean() {
     return {...base,modelConfigs:officialConfigs[c.id]||{}};
   });
   const {loggedOutOfficial,officialModelConfigs,...rest}=state;
-  return {...rest, activeProviders: state.activeProviders||{}, official, connections: state.connections.map(c=>({...c,hasKey:hasSecret(c.id)}))};
+  return {...rest, activeProviders: state.activeProviders||{}, official, connections: state.connections.map(c=>({...c,hasKey:hasSecret(c.id)})), layout: layoutInfo()};
+}
+
+function revealFolder(folder) {
+  if (process.platform === 'win32') return run('explorer.exe',[folder]);
+  if (process.platform === 'darwin') return run('open',[folder]);
+  return run('xdg-open',[folder]);
+}
+
+function pickFolder(startDir) {
+  const start = startDir && fs.existsSync(startDir) ? startDir : ensureWorkspaceRoot();
+  if (process.platform === 'darwin') {
+    const script = `POSIX path of (choose folder with prompt "选择本地项目" default location POSIX file ${JSON.stringify(start)})`;
+    return run('osascript',['-e', script]).then(({stdout})=>stdout.trim().replace(/\/$/, ''));
+  }
+  if (process.platform === 'win32') {
+    const escaped = start.replace(/'/g, "''");
+    return run('powershell.exe',['-NoProfile','-STA','-Command',`Add-Type -AssemblyName System.Windows.Forms; $dialog=New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description="选择本地项目"; $dialog.SelectedPath='${escaped}'; if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Console]::Write($dialog.SelectedPath)}`],{windowsHide:true}).then(({stdout})=>stdout.trim());
+  }
+  return Promise.resolve('');
 }
 async function body(req) { let data=''; for await (const chunk of req) {data+=chunk; if(data.length>100000) throw new Error('请求过大');} return JSON.parse(data || '{}'); }
 function validate(c) {
@@ -279,9 +320,36 @@ const server=http.createServer(async(req,res)=>{
           persist();
         }
         return send(200,result);
+      } else if(url.pathname==='/api/layout') {
+        let next=String(b.workspaceRoot||'').trim();
+        if(!next || !fs.existsSync(next) || !fs.statSync(next).isDirectory()){
+          next=await pickFolder(next||defaultWorkspaceRoot());
+        }
+        if(!next) throw new Error('请选择工作区母目录');
+        const resolved=path.resolve(next);
+        fs.mkdirSync(resolved,{recursive:true});
+        writeConfig({workspaceRoot:resolved});
       } else if(url.pathname==='/api/project') {
-        const {stdout}=await run('powershell.exe',['-NoProfile','-STA','-Command','Add-Type -AssemblyName System.Windows.Forms; $dialog=New-Object System.Windows.Forms.FolderBrowserDialog; $dialog.Description="选择本地项目"; if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){[Console]::OutputEncoding=[Text.Encoding]::UTF8; [Console]::Write($dialog.SelectedPath)}'],{windowsHide:true});
-        const folder=stdout.trim(); if(folder){const resolved=fs.realpathSync(folder);if(!state.projects.some(p=>p.path.toLowerCase()===resolved.toLowerCase()))state.projects.push({id:crypto.randomUUID(),name:path.basename(resolved),path:resolved,sessions:[]});persist();}
+        const requested=String(b.path||'').trim();
+        const start=requested?path.resolve(requested):workspaceRoot();
+        const folder=requested && fs.existsSync(requested) && fs.statSync(requested).isDirectory()
+          ? path.resolve(requested)
+          : await pickFolder(start);
+        if(folder){
+          const resolved=fs.realpathSync(folder);
+          const same=p=>process.platform==='win32'?p.path.toLowerCase()===resolved.toLowerCase():p.path===resolved;
+          if(!state.projects.some(same))state.projects.push({id:crypto.randomUUID(),name:path.basename(resolved),path:resolved,sessions:[]});
+          persist();
+        }
+      } else if(url.pathname==='/api/project/relocate') {
+        const p=findProject(b.id);
+        const next=String(b.path||'').trim();
+        const folder=next && fs.existsSync(next) && fs.statSync(next).isDirectory()
+          ? path.resolve(next)
+          : await pickFolder(p.path||workspaceRoot());
+        if(!folder) throw new Error('未选择新位置');
+        p.path=fs.realpathSync(folder);
+        persist();
       } else if(url.pathname==='/api/project/pin') {
         const p=findProject(b.id);
         p.pinned=!p.pinned;
@@ -296,7 +364,7 @@ const server=http.createServer(async(req,res)=>{
         const p=findProject(b.id);
         const folder=p.path && fs.existsSync(p.path) ? fs.realpathSync(p.path) : '';
         if(!folder) throw new Error('项目文件夹不存在');
-        await run('explorer.exe',[folder]).catch(()=>{});
+        await revealFolder(folder).catch(()=>{});
       } else if(url.pathname==='/api/project/archive') {
         const p=findProject(b.id);
         const archived=b.archived!==false && b.archived!==0 && b.archived!=='0';
@@ -494,15 +562,15 @@ const server=http.createServer(async(req,res)=>{
               ...entry,
               path:full,
               relative:slash(path.relative(project.path, full) || entry.name),
+              kind: entry.type==='directory' ? 'directory' : fileKindIcon(entry.name),
             };
           }),
         });
       } else return send(404,{error:'接口不存在'});
       return send(200,clean());
     }
-    const reqFile = url.pathname === '/' ? 'index.html' : url.pathname.replace(/^\/+/, '');
-    const localFile = path.resolve(root, 'public', reqFile);
-    if (!localFile.startsWith(path.resolve(root, 'public')) || !fs.existsSync(localFile) || fs.statSync(localFile).isDirectory()) {
+    const localFile = publicDirSafe(root, url.pathname);
+    if (!localFile || !fs.existsSync(localFile) || fs.statSync(localFile).isDirectory()) {
       res.writeHead(404); return res.end();
     }
     const ext = path.extname(localFile);

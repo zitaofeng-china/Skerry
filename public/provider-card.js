@@ -151,7 +151,7 @@ export function renderOfficialCard(c, activeGroup, isActive = false, testResult 
         <div class="cc-card-auth">
           ${!isLogged ? (
             c.loginAvailable === false
-              ? '<button type="button" class="secondary cc-login-btn" disabled>登录待接入</button>'
+              ? `<button type="button" class="secondary cc-login-btn" disabled title="${esc(c.loginDisabledReason || '官方登录暂不可用')}">${esc(c.id === 'official-gemini' ? '未配置 Google 客户端' : '登录待接入')}</button>`
               : `<button type="button" class="primary cc-login-btn" data-action="login" data-id="${esc(c.id)}">登录账号</button>`
           ) : ''}
           ${needsReauth ? `<button type="button" class="secondary cc-logout-btn" data-action="disconnect" data-id="${esc(c.id)}">退出登录</button>` : ''}

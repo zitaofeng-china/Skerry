@@ -141,7 +141,7 @@ test('权限弹窗按厂家真实模式列出，不把 Codex 档套到 Claude', 
   const agyHtml = chatPanel({ session: { id: 's1', name: '会话' }, partition: { id: 'p1', name: 'Gemini' }, managerReady: true });
   assert.match(agyHtml, /应如何批准 Gemini 操作/);
   assert.match(agyHtml, /data-mode="accept-edits"/);
-  assert.doesNotMatch(agyHtml, /data-mode="bypassPermissions"/);
+  assert.match(agyHtml, /data-mode="bypassPermissions"/);
   assert.doesNotMatch(agyHtml, /data-mode="never"/);
   chat.vendor = 'grok';
   chat.mode = 'auto';

@@ -248,9 +248,10 @@ export async function execute(name, args, ctx) {
         waitMsBeforeAsync: a.background ? 1 : 15000,
         background: Boolean(a.background),
         allowOutside,
+        abortSignal: ctx.abortSignal,
       });
     case 'get_command_or_subagent_output':
-      return { ok: true, tasks: listBackgroundTasks().filter(t => !(a.task_ids || []).length || a.task_ids.includes(t.id)) };
+      return { ok: true, tasks: listBackgroundTasks(ctx.workspace).filter(t => !(a.task_ids || []).length || a.task_ids.includes(t.id)) };
     case 'kill_command_or_subagent':
       return killBackgroundTask(a.task_id);
     case 'todo_write': {

@@ -37,7 +37,7 @@ test('Gemini 官方连接使用 Antigravity 同款粘贴授权码流程',()=>{
  const appSource=fs.readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
  assert.doesNotMatch(appSource,/about:blank/);
  assert.doesNotMatch(appSource,/resultOfWindowOpen/);
- assert.match(appSource,/window\.open\('','agents-gzt-oauth'\)/);
+ assert.match(appSource,/window\.open\('','skerry-oauth'\)/);
  assert.match(appSource,/一次性代码后，复制并粘贴到下方/);
  assert.doesNotMatch(appSource,/不启动 Antigravity CLI|无需安装 Antigravity CLI/);
  const startSource=fs.readFileSync(new URL('../scripts/start.mjs',import.meta.url),'utf8');
@@ -67,6 +67,19 @@ test('Gemini 登录启动返回浏览器粘贴码流程，而不是 CLI',async()
  assert.match(start.authorizationUrl,/^https:\/\/accounts\.google\.com\/o\/oauth2\/auth\?/);
  assert.match(start.authorizationUrl,/antigravity\.google/);
  assert.equal(JSON.stringify(start).includes('"cli"'),false);
+});
+
+test('未配置 Google 客户端时登录按钮灰掉并写明原因',async()=>{
+ const {renderOfficialCard}=await import('../public/provider-card.js');
+ const html=renderOfficialCard({
+  id:'official-gemini',
+  name:'Gemini',
+  connected:false,
+  loginAvailable:false,
+  loginDisabledReason:'未配置 GEMINI_OAUTH_CLIENT_ID，官方 Google 登录暂不可用。可改用自定义 Gemini 兼容接口。',
+ },'gemini',false);
+ assert.match(html,/disabled/);
+ assert.match(html,/未配置 Google 客户端/);
 });
 
 test('Gemini 授权 URL 与 Antigravity CLI 使用同一回调和 PKCE',async()=>{

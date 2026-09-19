@@ -1,5 +1,6 @@
 import { esc } from './shell.js';
 import { describeMode, modeMenuTitle, modeOptions } from './permission-modes.js';
+import { REASONING_LABELS } from './model-selection.js';
 
 export const chat = {
   messages: [],
@@ -17,6 +18,8 @@ export const chat = {
   sessionId: '',
   context: null,
   modeMenuOpen: false,
+  effort: '',
+  effortLevels: [],
 };
 
 export const group = {
@@ -43,6 +46,8 @@ export function resetChat() {
   chat.vendor = '';
   chat.vendorLabel = '';
   chat.mode = 'default';
+  chat.effort = '';
+  chat.effortLevels = [];
 }
 
 export function resetGroup() {
@@ -56,6 +61,7 @@ export function resetGroup() {
 }
 
 const SEND_ICON = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3.2v9.6M3.8 7.4 8 3.2l4.2 4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const STOP_ICON = '<svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="1.5" fill="currentColor"/></svg>';
 const WARN_ICON = '<svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.2 14.7 14H1.3L8 2.2z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M8 6.4v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="12.1" r=".8" fill="currentColor"/></svg>';
 
 export function formatTokens(n) {
@@ -159,9 +165,20 @@ function composeSendHtml({ streaming, isGroup, draft = '' }) {
   const empty = !String(draft || '').trim();
   const abort = isGroup ? ' data-scope="group"' : '';
   if (streaming) {
-    return `<button type="button" class="compose-send is-stop" data-action="chat-abort"${abort} aria-label="停止"></button>`;
+    return `<button type="button" class="compose-send is-stop" data-action="chat-abort"${abort} aria-label="停止">${STOP_ICON}</button>`;
   }
   return `<button type="submit" class="compose-send" aria-label="发送"${empty ? ' disabled' : ''}>${SEND_ICON}</button>`;
+}
+
+function effortChipsHtml() {
+  const levels = chat.effortLevels?.length ? chat.effortLevels : [];
+  if (!levels.length) return '';
+  const current = chat.effort || '';
+  const chips = levels.map(level => {
+    const on = level === current ? ' is-active' : '';
+    return `<button type="button" class="compose-effort${on}" data-action="chat-effort" data-effort="${esc(level)}">${esc(REASONING_LABELS[level] || level)}</button>`;
+  }).join('');
+  return `<div class="compose-effort-row" role="group" aria-label="推理力度">${chips}</div>`;
 }
 
 function composeRowHtml({ streaming, isGroup, draft = '' }) {
@@ -178,6 +195,7 @@ function composeRowHtml({ streaming, isGroup, draft = '' }) {
         <button type="button" class="compose-mode${warn}" data-action="chat-mode" title="切换权限模式" aria-haspopup="menu" aria-expanded="${open}">${chip.warn ? WARN_ICON : ''}<span>${esc(chip.label)}</span></button>
         ${open ? modeMenuHtml(vendor, mode) : ''}
       </div>
+      ${effortChipsHtml()}
     </div>
     <div class="compose-right">
       ${quotaRingHtml(quota)}
@@ -458,7 +476,7 @@ export function applySessionEvent(event, data, { sessionId, selectedPartition, v
   }
   if (event === 'group_event') {
     upsertGroupEvent(data);
-    patchGroup(sessionId);
+    schedulePatchGroup(sessionId);
     if (managerView) patchLog();
     return;
   }
@@ -515,19 +533,35 @@ export function groupPanel({ session, projectPath, managerReady, managerLabel = 
 
 export function patchGroup(sessionId) {
   if (typeof document === 'undefined') return;
+  if (groupFrame) cancelAnimationFrame(groupFrame);
+  groupFrame = 0;
+  pendingGroupId = sessionId || pendingGroupId;
   const log = document.querySelector('#group-log');
   if (log) {
     const streamWho = chat.vendorLabel || '管理者';
-    log.innerHTML = group.events.map(ev => renderGroupEvent(ev, sessionId || '')).join('')
+    log.innerHTML = group.events.map(ev => renderGroupEvent(ev, pendingGroupId || '')).join('')
       + (group.streaming ? `<article class="bubble assistant streaming"><div class="bubble-label">${esc(streamWho)}</div><div class="bubble-body" data-group-stream>${esc(group.streamText)}</div></article>` : '');
   }
   scrollChatToLatest();
   const live = liveTasks();
   const host = document.querySelector('[data-context-tasks]');
-  if (host) host.innerHTML = renderLiveBoard(sessionId || '', live);
+  if (host) host.innerHTML = renderLiveBoard(pendingGroupId || '', live);
   const actions = document.querySelector('[data-live-actions]');
   if (actions) actions.innerHTML = renderLiveActions(live);
-  patchTaskBox(sessionId);
+  patchTaskBox(pendingGroupId);
+}
+
+function schedulePatchGroup(sessionId) {
+  pendingGroupId = sessionId || pendingGroupId;
+  if (typeof requestAnimationFrame !== 'function') {
+    patchGroup(pendingGroupId);
+    return;
+  }
+  if (groupFrame) return;
+  groupFrame = requestAnimationFrame(() => {
+    groupFrame = 0;
+    patchGroup(pendingGroupId);
+  });
 }
 
 export async function loadGroupHistory(api, sessionId) {
@@ -609,7 +643,7 @@ function applyEvent(event, data) {
   const inGroup = Boolean(document.querySelector('[data-group-chat]'));
   if (event === 'group_event') {
     upsertGroupEvent(data);
-    patchGroup(data.sessionId);
+    schedulePatchGroup(data.sessionId);
     return;
   }
   if (event === 'group_timeline') {
@@ -637,20 +671,17 @@ function applyEvent(event, data) {
     chat.streamText += data.delta || '';
     if (inGroup) {
       group.streamText += data.delta || '';
-      const gel = document.querySelector('[data-group-stream]');
-      if (gel) gel.textContent += data.delta || '';
-      else patchGroup();
+      if (document.querySelector('[data-group-stream]')) scheduleStreamPaint();
+      else schedulePatchGroup();
       return;
     }
-    const el = document.querySelector('[data-stream-text]');
-    if (el) el.textContent += data.delta || '';
+    if (document.querySelector('[data-stream-text]')) scheduleStreamPaint();
     else patchLog();
     return;
   } else if (event === 'thought_delta') {
     if (inGroup) return;
     chat.thoughts += data.delta || '';
-    const el = document.querySelector('[data-stream-thoughts]');
-    if (el) el.textContent += data.delta || '';
+    if (document.querySelector('[data-stream-thoughts]')) scheduleStreamPaint();
     else patchLog();
     return;
   } else if (event === 'tool_call') {
@@ -733,24 +764,45 @@ export function scrollChatToLatest() {
       log.scrollTop = log.scrollHeight;
     });
   };
-  pin();
-  if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => {
-      pin();
-      requestAnimationFrame(pin);
-    });
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pin);
+  else pin();
+}
+
+let streamFrame = 0;
+let groupFrame = 0;
+let pendingGroupId = '';
+
+function paintStream() {
+  streamFrame = 0;
+  const el = document.querySelector('[data-stream-text]');
+  if (el) el.textContent = chat.streamText;
+  const th = document.querySelector('[data-stream-thoughts]');
+  if (th) th.textContent = chat.thoughts;
+  const gel = document.querySelector('[data-group-stream]');
+  if (gel) gel.textContent = group.streamText;
+  scrollChatToLatest();
+}
+
+function scheduleStreamPaint() {
+  if (typeof requestAnimationFrame !== 'function') {
+    paintStream();
+    return;
   }
+  if (streamFrame) return;
+  streamFrame = requestAnimationFrame(paintStream);
 }
 
 function patchLog() {
   if (typeof document === 'undefined') return;
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
   const log = document.querySelector('#chat-log');
   if (log) {
     const empty = !chat.messages.length && !chat.streaming ? '' : '';
     log.innerHTML = empty + chat.messages.map(renderMessage).join('') + (chat.streaming ? renderStreaming() : '');
   }
   const term = document.querySelector('.terminal-log');
-  if (term) {
+  if (term && !chat.streaming) {
     const text = chatTerminalLog();
     term.innerHTML = text ? esc(text) : '<span class="terminal-placeholder">Agent 执行的命令会显示在这里。</span>';
     term.scrollTop = term.scrollHeight;
@@ -792,10 +844,12 @@ export async function sendChat(api, { sessionId, partitionId, text }) {
   }
   patchCompose();
   try {
+    const payload = { sessionId, partitionId: partitionId || undefined, text };
+    if (chat.effort) payload.effort = chat.effort;
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, partitionId: partitionId || undefined, text }),
+      body: JSON.stringify(payload),
     });
     if (!response.ok) {
       let message = '对话失败';
